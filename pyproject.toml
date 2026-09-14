@@ -1,0 +1,45 @@
+[project]
+name = "opentps"
+version = "3.0.1"
+description = "Open source TPS for proton and photon therapy"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12,<3.13"
+authors = [
+    {name = "Sylvain Deffet", email = "sylvaindeffet@gmail.com"},
+    {name = "Damien Dasnoy", email = "damien.dasnoy@uclouvain.be"},
+    {name = "Valentin Hamaide", email = "valentin.hamaide@uclouvain.be"},
+    {name = "Guillaume Janssens", email = "guillaume.janssens@iba-group.com"},
+    {name = "Kevin Souris", email = "kevin.souris@iba-group.com"},
+    {name = "Sophie Wuyckens", email = "sophie.wuyckens@uclouvain.be"},
+]
+dependencies = [
+    "opentps-core",
+    "opentps-gui",
+]
+
+[project.urls]
+Homepage = "http://opentps.org/"
+
+[project.scripts]
+opentps = "opentps.gui.main:run"
+
+[tool.uv.workspace]
+members = ["opentps_core", "opentps_gui"]
+
+[tool.uv.sources]
+opentps-core = { workspace = true }
+opentps-gui = { workspace = true }
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["opentps_core/opentps", "opentps_gui/opentps"]

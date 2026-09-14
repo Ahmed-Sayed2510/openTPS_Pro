@@ -1,0 +1,165 @@
+# .gitlab-ci.yml for OpenTPS
+# The line pip install -e . --no-deps updates the docker image with any change made to the code. It is repeated
+# throughout the file because it is faster than relying on artifacts between jobs.
+# It could be even enhanced by caching the pip cache folder.
+#
+# The build-image job rebuilds and pushes the Docker image when Dockerfile or dependencies change.
+# To bootstrap (first time), trigger a pipeline manually via GitLab web UI.
+
+stages:
+  - build-image
+  - version_check
+  - namespace_check
+  - test_core
+  - test_gui
+  - test_legacy
+  - docs
+
+variables:
+  IMAGE_NAME: $CI_REGISTRY_IMAGE
+  IMAGE_TAG: latest
+
+default:
+    image: $IMAGE_NAME:$IMAGE_TAG
+
+build-image:
+  stage: build-image
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  variables:
+    GODEBUG: "http2client=0"
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${IMAGE_NAME}:${IMAGE_TAG}"
+  rules:
+    # Temporarily disabled - using existing image while testing OSMesa installation at runtime
+    - if: "false"
+    # - changes:
+    #     - Dockerfile
+    #     - pyproject.toml
+    #     - opentps_core/pyproject.toml
+    #     - opentps_gui/pyproject.toml
+    #     - uv.lock
+    #   when: always
+    # - if: $CI_PIPELINE_SOURCE == "web"
+    #   when: manual
+    #   allow_failure: true
+    # - when: never
+
+version_check:
+  stage: version_check
+  needs:
+    - job: build-image
+      optional: true
+  before_script:
+    - pip install -e . -e opentps_core -e opentps_gui --no-deps
+  script:
+    - pip install toml packaging
+    - python CI/check_version.py  # This script compare installed versions to those in your .toml file
+  rules:
+    - changes:
+        - Dockerfile
+        - "**/*.toml"
+        - "**/*.lock"
+        - .gitlab-ci.yml
+      when: always
+
+namespace_check:
+  stage: namespace_check
+  needs:
+    - job: version_check
+      optional: true
+  before_script:
+    - pip install -e . -e opentps_core -e opentps_gui --no-deps
+  script:
+    - python CI/tests.py
+  rules:
+    - when: on_success
+
+test_core:
+  stage: test_core
+  needs:
+    - job: version_check
+      optional: true
+  before_script:
+    - pip install -e . -e opentps_core -e opentps_gui --no-deps
+    - pip install pytest pytest-cov
+  script:
+    - pytest opentps_core/tests/ -v --tb=short --ignore=opentps_core/tests/test_IO/ #Those tests need to be corrected
+  rules:
+    - when: on_success
+
+test_gui:
+  stage: test_gui
+  needs:
+    - job: version_check
+      optional: true
+  before_script:
+    - pip install -e . -e opentps_core -e opentps_gui --no-deps
+    - pip install pytest pytest-cov
+  script:
+    - export QT_DEBUG_PLUGINS=1
+    - export QT_QPA_PLATFORM="offscreen"
+    - python -c "from PyQt5 import QtWidgets; app = QtWidgets.QApplication([]); print('PyQt initialization successful')"
+    - pytest opentps_gui/tests/ -v --tb=short
+  rules:
+    - when: on_success
+
+test_legacy_core:
+  stage: test_legacy
+  needs:
+    - job: version_check
+      optional: true
+  before_script:
+    - pip install -e . -e opentps_core -e opentps_gui --no-deps
+    - pip install pytest
+  script:
+    - pytest --pyargs
+        opentps.core.io.mcsquareIO
+        opentps.core.data._patientData
+        opentps.core.data._patient
+        opentps.core.data._patientList
+        opentps.core.data.plan._planProtonBeam
+        opentps.core.data.plan._planPhotonSegment
+        opentps.core.data.plan._protonPlan
+        opentps.core.data.plan._planProtonLayer
+        -v --tb=short
+  rules:
+    - when: on_success
+
+test_legacy_gui:
+  stage: test_legacy
+  needs:
+    - job: version_check
+      optional: true
+  before_script:
+    # Install OSMesa for VTK software rendering (no GPU/display required)
+    - apt-get update && apt-get install -y libosmesa6 libosmesa6-dev
+    - pip install -e . -e opentps_core -e opentps_gui --no-deps
+    - pip install pytest
+  script:
+    - export QT_DEBUG_PLUGINS=1
+    - export QT_QPA_PLATFORM="offscreen"
+    - export VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN=1
+    - pytest --pyargs opentps.gui.main -v --tb=short
+  rules:
+    - when: on_success
+
+docs:
+  stage: docs
+  needs:
+    - job: version_check
+      optional: true
+  before_script:
+    - pip install -e . -e opentps_core -e opentps_gui --no-deps
+  script:
+    - pip install sphinx sphinx-rtd-theme
+    - cd docs
+    - make html
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
